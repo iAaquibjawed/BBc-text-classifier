@@ -141,40 +141,57 @@ if __name__ == "__main__":
     print("Proceeding to machine learning models...")
 
     # Machine Learning Models
-    x_train, x_test, y_train, y_test = train_test_split(df["Text"], df["category"], test_size=0.25, random_state=42)
-    count_vect = CountVectorizer(ngram_range=(1, 2))
+    print("Preparing data for machine learning...")
+
+    # Sample the data if it's too large to prevent memory issues
+    if len(df) > 50000:
+        print(f"Dataset has {len(df)} samples. Sampling 50,000 for training to prevent memory issues...")
+        df_sampled = df.sample(n=50000, random_state=42)
+    else:
+        df_sampled = df
+
+    print(f"Using {len(df_sampled)} samples for training")
+
+    x_train, x_test, y_train, y_test = train_test_split(df_sampled["Text"], df_sampled["category"], test_size=0.25,
+                                                        random_state=42)
+
+    # Use smaller feature space to reduce memory usage
+    count_vect = CountVectorizer(ngram_range=(1, 2), max_features=10000)  # Limit features
     transformer = TfidfTransformer(norm='l2', sublinear_tf=True)
+
+    print("Creating TF-IDF vectors...")
     x_train_counts = count_vect.fit_transform(x_train)
     x_train_tfidf = transformer.fit_transform(x_train_counts)
 
     x_test_counts = count_vect.transform(x_test)
     x_test_tfidf = transformer.transform(x_test_counts)
 
-    print(x_train_tfidf.shape, x_test_tfidf.shape, y_train.shape, y_test.shape)
+    print(f"Training data shape: {x_train_tfidf.shape}")
+    print(f"Test data shape: {x_test_tfidf.shape}")
 
     joblib.dump(count_vect, 'count_vect.pkl')
 
-    # Logistic Regression
+    # Logistic Regression - disable parallel processing to prevent segfault
     print("Training Logistic Regression...")
-    lr = LogisticRegression(C=2, max_iter=1000, n_jobs=-1)
+    lr = LogisticRegression(C=2, max_iter=1000, n_jobs=1, solver='liblinear')  # Use single thread and simpler solver
     lr.fit(x_train_tfidf, y_train)
     y_pred1 = lr.predict(x_test_tfidf)
     print("Accuracy: " + str(accuracy_score(y_test, y_pred1)))
     print(classification_report(y_test, y_pred1))
 
-    scores = cross_val_score(lr, x_train_tfidf, y_train, cv=10)
+    scores = cross_val_score(lr, x_train_tfidf, y_train, cv=5)  # Reduce CV folds
     print("Cross-validated scores:", scores)
     joblib.dump(lr, 'Text_LR.pkl')
 
-    # SVM
+    # SVM - use simpler parameters to reduce memory usage
     print("Training SVM...")
-    svc = LinearSVC()
+    svc = LinearSVC(max_iter=1000, dual=False)  # Use dual=False for large datasets
     svc.fit(x_train_tfidf, y_train)
     y_pred2 = svc.predict(x_test_tfidf)
     print("Accuracy: " + str(accuracy_score(y_test, y_pred2)))
     print(classification_report(y_test, y_pred2))
 
-    scores = cross_val_score(svc, x_train_tfidf, y_train, cv=10)
+    scores = cross_val_score(svc, x_train_tfidf, y_train, cv=5)
     print("Cross-validated scores:", scores)
     joblib.dump(svc, 'Text_SVM.pkl')
 
@@ -186,58 +203,59 @@ if __name__ == "__main__":
     print("Accuracy: " + str(accuracy_score(y_test, y_pred3)))
     print(classification_report(y_test, y_pred3))
 
-    scores = cross_val_score(mnb, x_train_tfidf, y_train, cv=10)
+    scores = cross_val_score(mnb, x_train_tfidf, y_train, cv=5)
     print("Cross-validated scores:", scores)
 
-    # Random Forest
+    # Random Forest - reduce complexity
     print("Training Random Forest...")
-    rfc = RandomForestClassifier(n_estimators=300, max_depth=15, random_state=42, class_weight='balanced')
+    rfc = RandomForestClassifier(n_estimators=100, max_depth=10, random_state=42, n_jobs=1)  # Reduce complexity
     rfc.fit(x_train_tfidf, y_train)
     y_pred4 = rfc.predict(x_test_tfidf)
     print("Accuracy: " + str(accuracy_score(y_test, y_pred4)))
     print(classification_report(y_test, y_pred4))
 
-    scores = cross_val_score(rfc, x_train_tfidf, y_train, cv=10)
+    scores = cross_val_score(rfc, x_train_tfidf, y_train, cv=3)  # Reduce CV folds
     print("Cross-validated scores:", scores)
 
-    # Gradient Boosting
+    # Gradient Boosting - reduce complexity
     print("Training Gradient Boosting...")
-    gbc = GradientBoostingClassifier(n_estimators=100, max_features='auto', max_depth=4, random_state=1, verbose=1)
+    gbc = GradientBoostingClassifier(n_estimators=50, max_depth=3, random_state=1)  # Reduce complexity
     gbc.fit(x_train_tfidf, y_train)
     y_pred5 = gbc.predict(x_test_tfidf)
     print("Accuracy:", accuracy_score(y_test, y_pred5))
     print(classification_report(y_test, y_pred5))
 
-    scores = cross_val_score(gbc, x_train_tfidf, y_train, cv=5)
+    scores = cross_val_score(gbc, x_train_tfidf, y_train, cv=3)
     print("Cross-validated scores:", scores)
 
-    # Ensemble Voting Classifier
+    # Ensemble Voting Classifier - simpler models
     print("Training Ensemble...")
-    mnb = MultinomialNB()
-    rfc = RandomForestClassifier(n_estimators=1000, max_depth=12, random_state=42)
-    lr = LogisticRegression(C=2, max_iter=1000, n_jobs=-1)
-    svc = SVC(probability=True)
-    ec = VotingClassifier(estimators=[('Multinominal NB', mnb), ('Random Forest', rfc), ('Logistic Regression', lr),
-                                      ('Support Vector Machine', svc)], voting='soft', weights=[1, 2, 3, 4])
+    mnb_simple = MultinomialNB()
+    rfc_simple = RandomForestClassifier(n_estimators=50, max_depth=8, random_state=42, n_jobs=1)
+    lr_simple = LogisticRegression(C=1, max_iter=500, n_jobs=1, solver='liblinear')
+
+    # Skip SVC in ensemble to reduce memory usage
+    ec = VotingClassifier(
+        estimators=[('Multinominal NB', mnb_simple), ('Random Forest', rfc_simple), ('Logistic Regression', lr_simple)],
+        voting='hard')  # Use hard voting to reduce memory
     ec.fit(x_train_tfidf, y_train)
     y_pred6 = ec.predict(x_test_tfidf)
     print("Accuracy:", accuracy_score(y_test, y_pred6))
     print(classification_report(y_test, y_pred6))
 
-    scores = cross_val_score(ec, x_train_tfidf, y_train, cv=10)
+    scores = cross_val_score(ec, x_train_tfidf, y_train, cv=3)
     print("Cross-validated scores:", scores)
     joblib.dump(ec, 'Text_Ensemble.pkl')
 
-    # AdaBoost
+    # AdaBoost - simpler version
     print("Training AdaBoost...")
-    rfc = RandomForestClassifier(n_estimators=100, max_depth=9, random_state=0)
-    abc = AdaBoostClassifier(base_estimator=rfc, learning_rate=0.2, n_estimators=100)
+    abc = AdaBoostClassifier(n_estimators=50, learning_rate=0.5, random_state=42)  # Simpler AdaBoost
     abc.fit(x_train_tfidf, y_train)
     y_pred7 = abc.predict(x_test_tfidf)
     print("Accuracy: " + str(accuracy_score(y_test, y_pred7)))
     print(classification_report(y_test, y_pred7))
 
-    scores = cross_val_score(abc, x_train_tfidf, y_train, cv=10)
+    scores = cross_val_score(abc, x_train_tfidf, y_train, cv=3)
     print("Cross-validated scores:", scores)
 
     # Model Comparison
@@ -264,8 +282,9 @@ if __name__ == "__main__":
     # Deep Learning Models
     print("\nStarting Deep Learning Models...")
 
+    # Use the sampled dataset for deep learning too
     # Dynamic label encoding based on available categories
-    unique_categories = sorted(df['category'].unique())
+    unique_categories = sorted(df_sampled['category'].unique())
     num_classes = len(unique_categories)
 
     print(f"Encoding {num_classes} categories: {unique_categories}")
@@ -275,7 +294,7 @@ if __name__ == "__main__":
     print(f"Label mapping: {label_mapping}")
 
     # Apply label encoding
-    df['LABEL'] = df['category'].map(label_mapping)
+    df_sampled['LABEL'] = df_sampled['category'].map(label_mapping)
 
     vocabulary_size = 15000
     max_text_len = 768
@@ -295,16 +314,20 @@ if __name__ == "__main__":
         return cleaned_text
 
 
-    df['cleaned_text'] = df['text'].apply(preprocess_text)
+    df_sampled['cleaned_text'] = df_sampled['text'].apply(preprocess_text)
+
+    # Reduce vocabulary size for memory efficiency
+    vocabulary_size = 5000  # Reduced from 15000
+    max_text_len = 256  # Reduced from 768
 
     tokenizer = Tokenizer(num_words=vocabulary_size)
-    tokenizer.fit_on_texts(df['cleaned_text'].values)
+    tokenizer.fit_on_texts(df_sampled['cleaned_text'].values)
     le = len(tokenizer.word_index) + 1
     print(f"Vocabulary size: {le}")
-    sequences = tokenizer.texts_to_sequences(df['cleaned_text'].values)
+    sequences = tokenizer.texts_to_sequences(df_sampled['cleaned_text'].values)
     X_DeepLearning = pad_sequences(sequences, maxlen=max_text_len)
 
-    labels = to_categorical(df['LABEL'], num_classes=num_classes)
+    labels = to_categorical(df_sampled['LABEL'], num_classes=num_classes)
     XX_train, XX_test, y_train, y_test = train_test_split(X_DeepLearning, labels, test_size=0.25, random_state=42)
     print((XX_train.shape, y_train.shape, XX_test.shape, y_test.shape))
 
